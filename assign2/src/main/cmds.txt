@@ -1,0 +1,7 @@
+javac  common/MessageType.java server/*.java client/*.java
+java server.ChatServer
+java client.ChatClient
+
+javac -cp lib/json-20231013.jar common/MessageType.java server/*.java client/*.java
+java -cp .:lib/json-20231013.jar client.ChatClient
+java -cp .:lib/json-20231013.jar server.ChatServer
