@@ -10,8 +10,8 @@ import java.time.Instant;
 
 public class Room {
     private String name;
-    private List<ClientHandler> clients; // access needs to be done via locks
-    private final Lock clientListLock = new ReentrantLock();
+    protected List<ClientHandler> clients; // access needs to be done via locks
+    protected final Lock clientListLock = new ReentrantLock();
 
     public Room(String name) {
         this.name = name;
@@ -31,6 +31,10 @@ public class Room {
         } finally {
             clientListLock.unlock();
         }
+    }
+
+    public boolean isAiRoom() {
+        return false;
     }
 
     public void removeClient(ClientHandler client) {

@@ -110,17 +110,73 @@ public class ChatServer {
         try {
             rooms.put("parallel computation", new Room("parallel computation"));
             rooms.put("distributed computation", new Room("distributed computation"));
-            rooms.put("AI", new Room("AI"));
+            rooms.put("AI", new AIRoom("AI", 
+                "You are an AI assistant helping users discuss artificial intelligence topics. " +
+                "Be knowledgeable but approachable in your responses."));
         } finally {
             roomLock.unlock();
         }
     }
 
-
+    // No ChatServer.java, substitui o método getOrCreateRoom existente por estes dois:
+    
     public Room getOrCreateRoom(String name) {
+        System.out.println("getOrCreateRoom(String): " + name);
+        return getOrCreateRoom(name, null);
+    }
+    
+    public Room getOrCreateRoom(String name, String aiPrompt) {
+        System.out.println("getOrCreateRoom(String, String): name='" + name + "', aiPrompt='" + aiPrompt + "'");
         roomLock.lock();
         try {
-            return rooms.computeIfAbsent(name, Room::new);
+            Room existingRoom = rooms.get(name);
+            if (existingRoom != null) {
+                System.out.println("Room exists: " + existingRoom.getClass().getSimpleName());
+                return existingRoom;
+            }
+            
+            // Se aiPrompt não for null, criar sala AI
+            if (aiPrompt != null && !aiPrompt.trim().isEmpty()) {
+                System.out.println("Creating AI room");
+                Room newRoom = new AIRoom(name, aiPrompt);
+                rooms.put(name, newRoom);
+                System.out.println("Created AI room: " + newRoom.getClass().getSimpleName());
+                return newRoom;
+            } else {
+                System.out.println("Creating normal room");
+                // Sala normal
+                Room newRoom = new Room(name);
+                rooms.put(name, newRoom);
+                System.out.println("Created normal room: " + newRoom.getClass().getSimpleName());
+                return newRoom;
+            }
+        } finally {
+            roomLock.unlock();
+        }
+    }
+    
+    // Método para forçar criação de sala AI (substitui sala normal existente se estiver vazia)
+    public Room forceCreateAiRoom(String name, String aiPrompt) {
+        System.out.println("forceCreateAiRoom: name='" + name + "', aiPrompt='" + aiPrompt + "'");
+        roomLock.lock();
+        try {
+            Room existingRoom = rooms.get(name);
+            if (existingRoom != null && existingRoom.getClientCount() == 0 && !existingRoom.isAiRoom()) {
+                // Sala normal vazia, substituir por AI
+                System.out.println("Removing empty normal room to replace with AI");
+                rooms.remove(name);
+            }
+            
+            if (!rooms.containsKey(name)) {
+                System.out.println("Creating new AI room");
+                Room newRoom = new AIRoom(name, aiPrompt);
+                rooms.put(name, newRoom);
+                System.out.println("Force created AI room: " + newRoom.getClass().getSimpleName());
+                return newRoom;
+            } else {
+                System.out.println("Returning existing room: " + rooms.get(name).getClass().getSimpleName());
+                return rooms.get(name);
+            }
         } finally {
             roomLock.unlock();
         }

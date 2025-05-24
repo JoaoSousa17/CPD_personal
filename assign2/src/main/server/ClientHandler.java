@@ -241,6 +241,7 @@ public class ClientHandler {
         response.put("/leave", "Leave room");
         response.put("/cmds", "List all commands available");
         response.put("/join <room name>", "Joins room if exists if not creates a new one");
+        response.put("/join AI <topic>", "Creates or joins an AI-powered chat room");
         sendJsonMessage(response.toString());
     }
 
@@ -251,13 +252,76 @@ public class ClientHandler {
     }
 
     private void joinRoom(String roomName) {
+        // Debug: Imprimir parâmetros
+        System.out.println("=== DEBUG joinRoom ===");
+        System.out.println("Room name: '" + roomName + "'");
+        System.out.println("Room name lowercase: '" + roomName.toLowerCase() + "'");
+        
         if (currentRoom != null) {
             currentRoom.removeClient(this);
         }
 
-        Room newRoom = server.getOrCreateRoom(roomName);
+        Room newRoom;
+        
+        // Verificar se o nome da sala contém indicação de AI
+        boolean isAiRoom = roomName.toLowerCase().startsWith("ai ") || 
+                          roomName.toLowerCase().contains(" ai") ||
+                          roomName.toLowerCase().equals("ai");
+        
+        System.out.println("Is AI room check: " + isAiRoom);
+        
+        if (isAiRoom) {
+            System.out.println("Creating/checking AI room...");
+            
+            // Para salas AI, sempre criar/verificar como AI
+            // Verificar se já existe
+            Room existingRoom = server.getOrCreateRoom(roomName);
+            System.out.println("Existing room type: " + existingRoom.getClass().getSimpleName());
+            System.out.println("Is existing room AI: " + existingRoom.isAiRoom());
+            
+            if (existingRoom instanceof AIRoom) {
+                // Já é uma sala AI, usar
+                System.out.println("Using existing AI room");
+                newRoom = existingRoom;
+            } else {
+                // É uma sala normal, vamos criar uma nova como AI
+                System.out.println("Room exists as normal, client count: " + existingRoom.getClientCount());
+                
+                if (existingRoom.getClientCount() == 0) {
+                    // Sala vazia, forçar como AI
+                    System.out.println("Room is empty, forcing AI creation");
+                    String defaultPrompt = generateDefaultPrompt(roomName);
+                    System.out.println("Generated prompt: " + defaultPrompt);
+                    newRoom = server.forceCreateAiRoom(roomName, defaultPrompt);
+                    System.out.println("Forced AI room type: " + newRoom.getClass().getSimpleName());
+                } else {
+                    // Sala normal já tem utilizadores, manter como normal
+                    System.out.println("Room has users, keeping as normal");
+                    newRoom = existingRoom;
+                    // Enviar aviso que não é sala AI
+                    Thread.startVirtualThread(() -> {
+                        try {
+                            Thread.sleep(500);
+                            sendErrorMessage("Esta sala já existe como sala normal. Para uma sala AI, tenta um nome diferente como '" + roomName + " AI'");
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    });
+                }
+            }
+        } else {
+            System.out.println("Creating normal room...");
+            // Sala normal - usar o método original
+            newRoom = server.getOrCreateRoom(roomName);
+            System.out.println("Normal room type: " + newRoom.getClass().getSimpleName());
+        }
+        
         currentRoom = newRoom;
         currentRoom.addClient(this);
+
+        System.out.println("Final room type: " + currentRoom.getClass().getSimpleName());
+        System.out.println("Final room isAI: " + currentRoom.isAiRoom());
+        System.out.println("=== END DEBUG ===");
 
         // Send room joined confirmation to client
         JSONObject response = new JSONObject();
@@ -265,8 +329,35 @@ public class ClientHandler {
         response.put("roomName", roomName);
         response.put("userCount", currentRoom.getClientCount());
         response.put("userList", currentRoom.getUserList());
+        response.put("isAiRoom", currentRoom.isAiRoom()); // Indicar se é sala AI
 
         sendJsonMessage(response.toString());
+    }
+    
+    // Método auxiliar para gerar prompts baseados no nome da sala
+    private String generateDefaultPrompt(String roomName) {
+        String lowerName = roomName.toLowerCase();
+        
+        if (lowerName.contains("programming") || lowerName.contains("code")) {
+            return "You are a programming assistant in the chat room '" + roomName + 
+                   "'. Help users with coding questions, debug issues, and provide programming best practices. " +
+                   "Be concise but thorough in your explanations.";
+        } else if (lowerName.contains("math") || lowerName.contains("mathematics")) {
+            return "You are a mathematics tutor in the chat room '" + roomName + 
+                   "'. Help users solve mathematical problems and explain concepts clearly. " +
+                   "Use step-by-step explanations when helpful.";
+        } else if (lowerName.contains("science")) {
+            return "You are a science assistant in the chat room '" + roomName + 
+                   "'. Help users understand scientific concepts and answer their questions " +
+                   "across various scientific fields.";
+        } else if (lowerName.contains("language") || lowerName.contains("translation")) {
+            return "You are a language assistant in the chat room '" + roomName + 
+                   "'. Help users with language learning, translations, and linguistic questions.";
+        } else {
+            return "You are a helpful AI assistant in the chat room '" + roomName + 
+                   "'. Engage in meaningful conversation and help users with their questions. " +
+                   "Adapt your responses to the context of the conversation.";
+        }
     }
 
     private void leaveRoom() {
