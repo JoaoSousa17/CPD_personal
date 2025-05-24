@@ -16,6 +16,7 @@ public class ChatServer {
     private int port;
 
     private SSLServerSocket serverSocket;
+    private InetAddress bindAddr;
 
     private List<ClientHandler> clients; // access needs to be done via locks
 
@@ -32,10 +33,13 @@ public class ChatServer {
     private static final String KEY_MANAGER_ALGORITHM = KeyManagerFactory.getDefaultAlgorithm();
     private static final String SSL_PROTOCOL = "TLS";
 
-    public ChatServer(int port) {
+    public ChatServer(int port, String bindAddress) throws UnknownHostException {
         this.port = port;
         this.clients = new ArrayList<>();
+        this.bindAddr = InetAddress.getByName(bindAddress);
+
         initializeDefaultRooms();
+
     }
 
     public void start() {
@@ -47,13 +51,13 @@ public class ChatServer {
             SSLServerSocketFactory sslServerSocketFactory = sslContext.getServerSocketFactory();
 
             // Create the SSL server socket
-            serverSocket = (SSLServerSocket) sslServerSocketFactory.createServerSocket(port);
+            serverSocket = (SSLServerSocket) sslServerSocketFactory.createServerSocket(port, 0, bindAddr);
 
             // Configure SSL parameters if needed
             String[] enabledProtocols = {"TLSv1.2", "TLSv1.3"};
             serverSocket.setEnabledProtocols(enabledProtocols);
 
-            System.out.println("Chat server started on port " + port);
+            System.out.println("Chat server started on port " + port + " and address " + bindAddr);
 
             while (true) {
                 SSLSocket socket = (SSLSocket) serverSocket.accept();
@@ -121,33 +125,26 @@ public class ChatServer {
     // No ChatServer.java, substitui o método getOrCreateRoom existente por estes dois:
     
     public Room getOrCreateRoom(String name) {
-        System.out.println("getOrCreateRoom(String): " + name);
         return getOrCreateRoom(name, null);
     }
     
     public Room getOrCreateRoom(String name, String aiPrompt) {
-        System.out.println("getOrCreateRoom(String, String): name='" + name + "', aiPrompt='" + aiPrompt + "'");
         roomLock.lock();
         try {
             Room existingRoom = rooms.get(name);
             if (existingRoom != null) {
-                System.out.println("Room exists: " + existingRoom.getClass().getSimpleName());
                 return existingRoom;
             }
             
             // Se aiPrompt não for null, criar sala AI
             if (aiPrompt != null && !aiPrompt.trim().isEmpty()) {
-                System.out.println("Creating AI room");
                 Room newRoom = new AIRoom(name, aiPrompt);
                 rooms.put(name, newRoom);
-                System.out.println("Created AI room: " + newRoom.getClass().getSimpleName());
                 return newRoom;
             } else {
-                System.out.println("Creating normal room");
                 // Sala normal
                 Room newRoom = new Room(name);
                 rooms.put(name, newRoom);
-                System.out.println("Created normal room: " + newRoom.getClass().getSimpleName());
                 return newRoom;
             }
         } finally {
@@ -157,24 +154,19 @@ public class ChatServer {
     
     // Método para forçar criação de sala AI (substitui sala normal existente se estiver vazia)
     public Room forceCreateAiRoom(String name, String aiPrompt) {
-        System.out.println("forceCreateAiRoom: name='" + name + "', aiPrompt='" + aiPrompt + "'");
         roomLock.lock();
         try {
             Room existingRoom = rooms.get(name);
             if (existingRoom != null && existingRoom.getClientCount() == 0 && !existingRoom.isAiRoom()) {
                 // Sala normal vazia, substituir por AI
-                System.out.println("Removing empty normal room to replace with AI");
                 rooms.remove(name);
             }
             
             if (!rooms.containsKey(name)) {
-                System.out.println("Creating new AI room");
                 Room newRoom = new AIRoom(name, aiPrompt);
                 rooms.put(name, newRoom);
-                System.out.println("Force created AI room: " + newRoom.getClass().getSimpleName());
                 return newRoom;
             } else {
-                System.out.println("Returning existing room: " + rooms.get(name).getClass().getSimpleName());
                 return rooms.get(name);
             }
         } finally {
@@ -215,6 +207,8 @@ public class ChatServer {
 
     public static void main(String[] args) {
         int port = 8443;
+        String bindAddress = "localhost";
+
         if (args.length > 0) {
             try {
                 port = Integer.parseInt(args[0]);
@@ -223,10 +217,16 @@ public class ChatServer {
             }
         }
 
-        ChatServer server = new ChatServer(port);
+        if (args.length > 1) {
+            bindAddress = args[1];
+        }
 
-
-
-        server.start();
+        try {
+            ChatServer server = new ChatServer(port, bindAddress);
+            server.start();
+        } catch (UnknownHostException e) {
+            System.err.println("Invalid bind address: " + bindAddress);
+            e.printStackTrace();
+        }
     }
 }

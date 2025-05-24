@@ -29,7 +29,13 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
     private JButton regSubmitButton;
     private JButton regLoginButton;
 
-    public ClientGUI() {
+    private String serverAddress;
+    private int serverPort;
+
+
+    public ClientGUI(String serverAddress, int serverPort) {
+        this.serverAddress = serverAddress;
+        this.serverPort = serverPort;
         client = new ChatClient();
         client.setListener(this);
         buildUI();
@@ -255,7 +261,7 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
             return;
         }
 
-        if (client.connect("localhost", 8443)) {
+        if (client.connect(serverAddress, serverPort)) {
             if (client.login(username, password)) {
                 showChatPanel();
             } else {
@@ -275,7 +281,7 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
             return;
         }
 
-        if (client.connect("localhost", 8443)) {
+        if (client.connect(serverAddress, serverPort)) {
             if (client.register(username, password)) {
                 JOptionPane.showMessageDialog(this, "Registration successful. Welcome to the chat!");
                 showChatPanel();
@@ -337,7 +343,7 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
 
             showLoginPanel();
 
-            JOptionPane.showMessageDialog(this, "Disconnected from server.", "Disconnection", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Disconnected from server.", "Conection lost", JOptionPane.INFORMATION_MESSAGE);
 
             client = new ChatClient();
             client.setListener(this);
@@ -366,9 +372,8 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
         onSystemMessage(username + " has left room: " + roomName);
     }
 
-    public void onRoomJoined(String roomName, int userCount, List<String> users) {
-        String userList = String.join(", ", users);
-        onSystemMessage("Joined room: " + roomName + " (" + userCount + " users: " + userList + ")");
+    public void onRoomJoined(String roomName) {
+        onSystemMessage("Joined room: " + roomName);
     }
 
     public void onRoomLeft(String roomName) {
@@ -408,16 +413,31 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
     }
 
     public static void main(String[] args) {
+        String serverAddr = "localhost";
+        int port = 8443;
+
+        if (args.length > 0) serverAddr = args[0];
+        if (args.length > 1) {
+            try {
+                port = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid port number, using default 8443");
+            }
+        }
+
+        final String finalServerAddr = serverAddr;
+        final int finalPort = port;
+
         SwingUtilities.invokeLater(() -> {
             try {
-                // Set system look and feel for better appearance
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception e) {
                 e.printStackTrace();
             }
 
-            ClientGUI gui = new ClientGUI();
+            ClientGUI gui = new ClientGUI(finalServerAddr, finalPort);
             gui.setVisible(true);
         });
     }
+
 }

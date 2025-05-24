@@ -47,6 +47,8 @@ public class ClientHandler {
                     handleLoginRequest(json);
                 } else if (type.equals(MessageType.REGISTER_REQUEST.toString())) {
                     handleRegisterRequest(json);
+                } else if (type.equals(MessageType.RECONNECT.toString())) {
+                    handleReconnectRequest(json);
                 } else {
                     sendErrorMessage("Invalid initial message type");
                     closeConnection();
@@ -91,6 +93,12 @@ public class ClientHandler {
                         String content = jsonMessage.getString("content");
                         currentRoom.broadcastMessage(content, this);
                     }
+                    else if (type.equals("HEARTBEAT")) {
+                        if(client != null) {
+                            sendHeartbeatAck();
+                        }
+                    }
+
                     else {
                         sendErrorMessage("Unknown message type: " + type);
                     }
@@ -196,6 +204,54 @@ public class ClientHandler {
         }
     }
 
+    private void handleReconnectRequest(JSONObject json) {
+
+        try {
+            String username = json.getString("username");
+            String token = json.getString("token");
+            String roomName = null;
+            if (json.has("roomName") && !json.isNull("roomName")) {
+                roomName = json.getString("roomName");
+            }
+
+
+
+            boolean isValidToken = server.validateToken(username,token);
+
+            if (isValidToken) {
+                this.client = new Client(username, socket.getInetAddress().getHostAddress());
+                server.addClient(this);
+
+                if (roomName != null && !roomName.isEmpty()) {
+                    joinRoom(roomName, true);
+                }
+
+                JSONObject response = new JSONObject();
+                response.put("type", "RECONNECT_RESPONSE");
+                response.put("success", true);
+                sendJsonMessage(response.toString());
+
+                sendWelcomeMessage(username);
+
+            } else {
+                JSONObject response = new JSONObject();
+                response.put("type", "RECONNECT_RESPONSE");
+                response.put("success", false);
+                sendJsonMessage(response.toString());
+
+                closeConnection();
+            }
+
+        } catch (JSONException e) {
+            JSONObject response = new JSONObject();
+            response.put("type", "RECONNECT_RESPONSE");
+            response.put("success", false);
+            sendJsonMessage(response.toString());
+
+            closeConnection();
+        }
+    }
+
     private void sendLoginResponse(boolean success, String message) {
         JSONObject response = new JSONObject();
         response.put("type", MessageType.LOGIN_RESPONSE.toString());
@@ -220,6 +276,11 @@ public class ClientHandler {
         welcome.put("message", "Welcome to the chat, " + username + "!");
 
         sendJsonMessage(welcome.toString());
+    }
+    private void sendHeartbeatAck() {
+        JSONObject ack = new JSONObject();
+        ack.put("type", "HEARTBEAT_ACK");
+        sendJsonMessage(ack.toString());
     }
 
     private void sendRoomList() {
@@ -251,90 +312,69 @@ public class ClientHandler {
         sendJsonMessage(response.toString());
     }
 
-    private void joinRoom(String roomName) {
-        // Debug: Imprimir parâmetros
-        System.out.println("=== DEBUG joinRoom ===");
-        System.out.println("Room name: '" + roomName + "'");
-        System.out.println("Room name lowercase: '" + roomName.toLowerCase() + "'");
-        
+    private void joinRoom(String roomName, boolean silent) {
         if (currentRoom != null) {
             currentRoom.removeClient(this);
         }
 
         Room newRoom;
-        
-        // Verificar se o nome da sala contém indicação de AI
-        boolean isAiRoom = roomName.toLowerCase().startsWith("ai ") || 
-                          roomName.toLowerCase().contains(" ai") ||
-                          roomName.toLowerCase().equals("ai");
-        
-        System.out.println("Is AI room check: " + isAiRoom);
-        
+        boolean isAiRoom = roomName.toLowerCase().startsWith("ai ") ||
+                roomName.toLowerCase().contains(" ai") ||
+                roomName.toLowerCase().equals("ai");
+
+
         if (isAiRoom) {
-            System.out.println("Creating/checking AI room...");
-            
-            // Para salas AI, sempre criar/verificar como AI
-            // Verificar se já existe
+
+
             Room existingRoom = server.getOrCreateRoom(roomName);
-            System.out.println("Existing room type: " + existingRoom.getClass().getSimpleName());
-            System.out.println("Is existing room AI: " + existingRoom.isAiRoom());
-            
+
             if (existingRoom instanceof AIRoom) {
-                // Já é uma sala AI, usar
-                System.out.println("Using existing AI room");
+
                 newRoom = existingRoom;
             } else {
-                // É uma sala normal, vamos criar uma nova como AI
-                System.out.println("Room exists as normal, client count: " + existingRoom.getClientCount());
-                
+
+
                 if (existingRoom.getClientCount() == 0) {
-                    // Sala vazia, forçar como AI
-                    System.out.println("Room is empty, forcing AI creation");
+
                     String defaultPrompt = generateDefaultPrompt(roomName);
-                    System.out.println("Generated prompt: " + defaultPrompt);
+
                     newRoom = server.forceCreateAiRoom(roomName, defaultPrompt);
-                    System.out.println("Forced AI room type: " + newRoom.getClass().getSimpleName());
                 } else {
-                    // Sala normal já tem utilizadores, manter como normal
-                    System.out.println("Room has users, keeping as normal");
+
                     newRoom = existingRoom;
-                    // Enviar aviso que não é sala AI
-                    Thread.startVirtualThread(() -> {
-                        try {
-                            Thread.sleep(500);
-                            sendErrorMessage("Esta sala já existe como sala normal. Para uma sala AI, tenta um nome diferente como '" + roomName + " AI'");
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                    });
+                    if (!silent) {
+                        Thread.startVirtualThread(() -> {
+                            try {
+                                Thread.sleep(500);
+                                sendErrorMessage("Esta sala já existe como sala normal. Para uma sala AI, tenta um nome diferente como '" + roomName + " AI'");
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        });
+                    }
                 }
             }
         } else {
-            System.out.println("Creating normal room...");
-            // Sala normal - usar o método original
             newRoom = server.getOrCreateRoom(roomName);
-            System.out.println("Normal room type: " + newRoom.getClass().getSimpleName());
         }
-        
+
         currentRoom = newRoom;
         currentRoom.addClient(this);
 
-        System.out.println("Final room type: " + currentRoom.getClass().getSimpleName());
-        System.out.println("Final room isAI: " + currentRoom.isAiRoom());
-        System.out.println("=== END DEBUG ===");
+        if (!silent) {
+            JSONObject response = new JSONObject();
+            response.put("type", MessageType.ROOM_JOINED.toString());
+            response.put("roomName", roomName);
+            response.put("isAiRoom", currentRoom.isAiRoom());
 
-        // Send room joined confirmation to client
-        JSONObject response = new JSONObject();
-        response.put("type", MessageType.ROOM_JOINED.toString());
-        response.put("roomName", roomName);
-        response.put("userCount", currentRoom.getClientCount());
-        response.put("userList", currentRoom.getUserList());
-        response.put("isAiRoom", currentRoom.isAiRoom()); // Indicar se é sala AI
+            sendJsonMessage(response.toString());
+        }
+    }
 
-        sendJsonMessage(response.toString());
+    private void joinRoom(String roomName) {
+        joinRoom(roomName, false);
     }
     
-    // Método auxiliar para gerar prompts baseados no nome da sala
     private String generateDefaultPrompt(String roomName) {
         String lowerName = roomName.toLowerCase();
         
@@ -366,7 +406,6 @@ public class ClientHandler {
             currentRoom.removeClient(this);
             currentRoom = null;
 
-            // Send room left confirmation to client
             JSONObject response = new JSONObject();
             response.put("type", MessageType.ROOM_LEFT.toString());
             response.put("roomName", roomName);

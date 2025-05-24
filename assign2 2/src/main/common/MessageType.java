@@ -11,6 +11,8 @@ public enum MessageType {
     LIST_CUR_ROOM,
     LIST_CMDS,
     QUIT,
+    RECONNECT,
+    HEARTBEAT,
 
     // Server -> Client messages
     LOGIN_RESPONSE,
@@ -24,4 +26,6 @@ public enum MessageType {
     USER_LEFT,
     MESSAGE_RECEIVED,
     ERROR,
+    RECONNECT_RESPONSE,
+    HEARTBEAT_ACK,
 }

@@ -31,11 +31,27 @@ public class ChatClient {
     private JSONObject authResponse = null;
     private boolean authResponseReceived = false;
     private String lastLoginError = "";
+    private String Token= "";
+    private String Username = "";
 
     private static final String TRUSTSTORE_PATH = "client/client.truststore";
     private static final String TRUSTSTORE_PASSWORD = "changeit";
 
+
+    private String serverAddress = "";
+    private int serverPort = 0;
+
+    private final int HEARTBEAT_INTERVAL = 10_000;
+    private final int HEARTBEAT_TIMEOUT = 20_000;
+    private long lastHeartbeatAckTime = System.currentTimeMillis();
+
+    private Thread heartbeatThread;
+    private boolean heartbeatRunning = false;
+
+
     public boolean connect(String serverAddress, int port) {
+        this.serverAddress = serverAddress;
+        this.serverPort = port;
         try {
             // Set up the SSL context with trust manager
             SSLContext sslContext = createSSLContext();
@@ -45,6 +61,7 @@ public class ChatClient {
 
             // Create SSL socket
             socket = (SSLSocket) sslSocketFactory.createSocket(serverAddress, port);
+            socket.setSoTimeout(HEARTBEAT_TIMEOUT);
 
             // Configure SSL parameters
             String[] enabledProtocols = {"TLSv1.2", "TLSv1.3"};
@@ -63,23 +80,8 @@ public class ChatClient {
     }
 
     private SSLContext createSSLContext() throws GeneralSecurityException, IOException {
-        // For development/testing: Trust all certificates
-        if (!new File(TRUSTSTORE_PATH).exists()) {
-            TrustManager[] trustAllCerts = new TrustManager[] {
-                    new X509TrustManager() {
-                        public X509Certificate[] getAcceptedIssuers() { return null; }
-                        public void checkClientTrusted(X509Certificate[] certs, String authType) {}
-                        public void checkServerTrusted(X509Certificate[] certs, String authType) {}
-                    }
-            };
 
-            SSLContext sc = SSLContext.getInstance("TLS");
-            sc.init(null, trustAllCerts, new SecureRandom());
-            return sc;
-        }
-
-        // For production: Use proper trust store
-        else {
+        if (new File(TRUSTSTORE_PATH).exists()) {
             KeyStore trustStore = KeyStore.getInstance("JKS");
             try (FileInputStream fis = new FileInputStream(TRUSTSTORE_PATH)) {
                 trustStore.load(fis, TRUSTSTORE_PASSWORD.toCharArray());
@@ -91,15 +93,40 @@ public class ChatClient {
             SSLContext sslContext = SSLContext.getInstance("TLS");
             sslContext.init(null, trustManagerFactory.getTrustManagers(), null);
             return sslContext;
+        } else {
+            TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            trustManagerFactory.init((KeyStore) null); 
+
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, trustManagerFactory.getTrustManagers(), null);
+            return sslContext;
         }
     }
-
     public static void main(String[] args) {
+        String serverAddress = "localhost";
+        int port = 8443;
+
+        if (args.length > 0) {
+            try {
+                port = Integer.parseInt(args[0]);
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid port number. Using default port 8443.");
+            }
+        }
+        if (args.length > 1) {
+            serverAddress = args[1];
+        }
+
+
+        String finalServerAddress = serverAddress;
+        int finalPort = port;
+
         javax.swing.SwingUtilities.invokeLater(() -> {
-            ClientGUI gui = new ClientGUI();
+            ClientGUI gui = new ClientGUI(finalServerAddress, finalPort);
             gui.setVisible(true);
         });
     }
+
 
     public void setListener(ChatListener listener) {
         this.listener = listener;
@@ -138,6 +165,9 @@ public class ChatClient {
                     readyMsg.put("type", "READY");
                     out.println(readyMsg.toString());
                     isAuthenticated = true;
+                    Token = authResponse.getString("message");
+                    Username = username;
+                    startHeartbeat();
                     return true;
                 } else {
                     lastLoginError = authResponse.getString("message");
@@ -188,6 +218,9 @@ public class ChatClient {
                     readyMsg.put("type", "READY");
                     out.println(readyMsg.toString());
                     isAuthenticated = true;
+                    Token = authResponse.getString("message");
+                    Username = username;
+                    startHeartbeat();
                     return true;
                 } else {
                     lastLoginError = authResponse.getString("message");
@@ -270,8 +303,90 @@ public class ChatClient {
             out.println(request.toString());
         }
     }
+    private boolean reconnect() {
+
+        int attempts = 0;
+        while (attempts < 5) {
+            try {
+                Thread.sleep(10000);
+
+                if (!connect(serverAddress, serverPort)) {
+                    attempts++;
+                    continue;
+                }
+
+                new Thread(new IncomingMessageHandler()).start();
+
+                JSONObject reconnectMsg = new JSONObject();
+                reconnectMsg.put("type", "RECONNECT");
+                reconnectMsg.put("token", Token);
+                reconnectMsg.put("username", Username);
+                reconnectMsg.put("roomName", currentRoom);
+
+                authLock.lock();
+                try {
+                    authResponseReceived = false;
+                    authResponse = null;
+                } finally {
+                    authLock.unlock();
+                }
+
+                out.println(reconnectMsg.toString());
+
+                authLock.lock();
+                try {
+                    long timeout = System.currentTimeMillis() + 5000;
+                    while (!authResponseReceived && System.currentTimeMillis() < timeout) {
+                        long waitTime = timeout - System.currentTimeMillis();
+                        if (waitTime <= 0) break;
+                        authCondition.await(waitTime, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    }
+
+                    if (!authResponseReceived) {
+                        attempts++;
+                        continue;
+                    }
+                    if (authResponse.getString("type").equals(MessageType.RECONNECT_RESPONSE.toString())) {
+                        boolean success = authResponse.getBoolean("success");
+                        if (success) {
+                            isAuthenticated = true;
+                            startHeartbeat();
+                            return true;
+                        } else {
+                            attempts++;
+                            continue;
+                        }
+                    } else {
+                        attempts++;
+                        continue;
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                } catch (JSONException e) {
+                    attempts++;
+                    continue;
+                } finally {
+                    authLock.unlock();
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                attempts++;
+            }
+        }
+
+        if (listener != null) {
+            SwingUtilities.invokeLater(() -> listener.onDisconnect());
+        }
+        return false;
+    }
+
+
+
 
     public void disconnect() {
+        stopHeartbeat();
         try {
             if (out != null) {
                 JSONObject quitMsg = new JSONObject();
@@ -285,6 +400,36 @@ public class ChatClient {
             e.printStackTrace();
         }
     }
+    private void startHeartbeat() {
+        heartbeatRunning = true;
+        heartbeatThread = new Thread(() -> {
+            while (heartbeatRunning && socket != null && !socket.isClosed() && isAuthenticated) {
+                try {
+                    JSONObject heartbeat = new JSONObject();
+                    heartbeat.put("type", "HEARTBEAT");
+                    out.println(heartbeat.toString());
+
+                    Thread.sleep(HEARTBEAT_INTERVAL);
+
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+        heartbeatThread.setDaemon(true);
+        heartbeatThread.start();
+    }
+
+    private void stopHeartbeat() {
+        heartbeatRunning = false;
+        if (heartbeatThread != null) {
+            heartbeatThread.interrupt();
+        }
+    }
+
 
     public String getLastLoginError() {
         return lastLoginError;
@@ -306,7 +451,7 @@ public class ChatClient {
                         // Authentication responses
                         if (!isAuthenticated &&
                                 (type.equals(MessageType.LOGIN_RESPONSE.toString()) ||
-                                        type.equals(MessageType.REGISTER_RESPONSE.toString()))) {
+                                        type.equals(MessageType.REGISTER_RESPONSE.toString()) || type.equals(MessageType.RECONNECT_RESPONSE.toString()))) {
                             authLock.lock();
                             try {
                                 authResponse = jsonMessage;
@@ -336,16 +481,15 @@ public class ChatClient {
                     if (socket != null && !socket.isClosed()) {
                         socket.close();
                     }
-
-                    if (listener != null) {
-                        SwingUtilities.invokeLater(() -> {
-                            listener.onDisconnect();
-                        });
-                    }
+                    isAuthenticated = false;
+                    startHeartbeat();
+                    reconnect();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
             }
+
+
         }
 
         private void processMessage(JSONObject message) {
@@ -389,14 +533,8 @@ public class ChatClient {
                     case "ROOM_JOINED":
                         if (listener != null) {
                             String roomName = message.getString("roomName");
-                            int userCount = message.getInt("userCount");
-                            List<String> users = new ArrayList<>();
-                            JSONArray userArray = message.getJSONArray("userList");
-                            for (int i = 0; i < userArray.length(); i++) {
-                                users.add(userArray.getString(i));
-                            }
                             currentRoom = roomName;
-                            listener.onRoomJoined(roomName, userCount, users);
+                            listener.onRoomJoined(roomName);
                         }
                         break;
 
@@ -406,6 +544,9 @@ public class ChatClient {
                             currentRoom = null;
                             listener.onRoomLeft(roomName);
                         }
+                        break;
+                    case "HEARTBEAT_ACK":
+                        lastHeartbeatAckTime = System.currentTimeMillis();
                         break;
 
                     case "ROOM_LIST":
@@ -441,6 +582,20 @@ public class ChatClient {
                             listener.onErrorMessage(errorMsg);
                         }
                         break;
+                    case "RECONNECT_RESPONSE":
+                        if (listener != null) {
+                            boolean success = message.getBoolean("success");
+                            if (success) {
+                                isAuthenticated = true;
+                                startHeartbeat();
+                                listener.onSystemMessage("Reconnected successfully!");
+                            } else {
+                                listener.onErrorMessage("Reconnection failed. Please login again.");
+                                Token = "";
+                                Username = "";
+                            }
+                        }
+                        break;
                 }
             } catch (JSONException e) {
                 System.err.println("Error processing message: " + e.getMessage());
@@ -454,7 +609,7 @@ public class ChatClient {
         void onErrorMessage(String errorMessage);
         void onUserJoined(String username, String roomName);
         void onUserLeft(String username, String roomName);
-        void onRoomJoined(String roomName, int userCount, List<String> users);
+        void onRoomJoined(String roomName);
         void onRoomLeft(String roomName);
         void onRoomList(List<String> rooms);
         void onRoom(String roomName);
