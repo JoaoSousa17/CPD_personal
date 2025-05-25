@@ -25,9 +25,8 @@ public class Room {
     public void addClient(ClientHandler client) {
         clientListLock.lock();
         try {
-            clients.add(client);
-            // Notify all clients in the room that a new user joined
             broadcastUserJoined(client.getClient().getUsername());
+            clients.add(client);
         } finally {
             clientListLock.unlock();
         }
@@ -58,7 +57,6 @@ public class Room {
         message.put("roomName", this.name);
         message.put("sender", username);
         message.put("content", content);
-        message.put("timestamp", Instant.now().toString());
 
         String jsonMessage = message.toString();
 

@@ -349,13 +349,13 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
             client.setListener(this);
         });
     }
-    public void onChatMessage(String sender, String content, String roomName, String timestamp) {
-        String formatted = String.format("[%s] <b>%s</b>: %s", timestamp, sender, content);
+    public void onChatMessage(String sender, String content, String roomName) {
+        String formatted = String.format("<b>%s</b>: %s", sender, content);
         onMessageReceived(formatted);
     }
 
     public void onSystemMessage(String message) {
-        String formatted = "<i>[System]: " + message + "</i>";
+        String formatted = "<i>" + message + "</i>";
         onMessageReceived(formatted);
     }
 
@@ -365,7 +365,7 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
     }
 
     public void onUserJoined(String username, String roomName) {
-        onSystemMessage(username + " has joined room: " + roomName);
+        onSystemMessage('[' + username + " enters the room]");
     }
 
     public void onUserLeft(String username, String roomName) {
@@ -373,7 +373,7 @@ public class ClientGUI extends JFrame implements ChatClient.ChatListener {
     }
 
     public void onRoomJoined(String roomName) {
-        onSystemMessage("Joined room: " + roomName);
+        onSystemMessage("Room: " + roomName);
     }
 
     public void onRoomLeft(String roomName) {

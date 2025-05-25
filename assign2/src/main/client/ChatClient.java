@@ -274,35 +274,6 @@ public class ChatClient {
         }
     }
 
-
-    public void requestRoomList() {
-        if (out != null) {
-            JSONObject request = new JSONObject();
-            request.put("type", MessageType.LIST_ROOMS.toString());
-
-            out.println(request.toString());
-        }
-    }
-
-    public void joinRoom(String roomName) {
-        if (out != null) {
-            JSONObject request = new JSONObject();
-            request.put("type", MessageType.JOIN_ROOM.toString());
-            request.put("roomName", roomName);
-
-            out.println(request.toString());
-            currentRoom = roomName;
-        }
-    }
-
-    public void leaveRoom() {
-        if (out != null && currentRoom != null) {
-            JSONObject request = new JSONObject();
-            request.put("type", MessageType.LEAVE_ROOM.toString());
-
-            out.println(request.toString());
-        }
-    }
     private boolean reconnect() {
 
         int attempts = 0;
@@ -503,6 +474,13 @@ public class ChatClient {
                             listener.onSystemMessage(welcomeMsg);
                         }
                         break;
+                    case "ROOM_JOINED":
+                        if (listener != null) {
+                            String roomName = message.getString("roomName");
+                            currentRoom = roomName;
+                            listener.onRoomJoined(roomName);
+                        }
+                        break;
 
                     case "USER_JOINED":
                         if (listener != null) {
@@ -525,16 +503,7 @@ public class ChatClient {
                             String sender = message.getString("sender");
                             String content = message.getString("content");
                             String roomName = message.getString("roomName");
-                            String timestamp = message.getString("timestamp");
-                            listener.onChatMessage(sender, content, roomName, timestamp);
-                        }
-                        break;
-
-                    case "ROOM_JOINED":
-                        if (listener != null) {
-                            String roomName = message.getString("roomName");
-                            currentRoom = roomName;
-                            listener.onRoomJoined(roomName);
+                            listener.onChatMessage(sender, content, roomName);
                         }
                         break;
 
@@ -604,7 +573,7 @@ public class ChatClient {
     }
 
     public interface ChatListener {
-        void onChatMessage(String sender, String content, String roomName, String timestamp);
+        void onChatMessage(String sender, String content, String roomName);
         void onSystemMessage(String message);
         void onErrorMessage(String errorMessage);
         void onUserJoined(String username, String roomName);
